@@ -571,100 +571,101 @@ class WebSocket(object):
 
 
 class SimpleWebSocketServer(object):
-   def __init__(self, host, port, websocketclass, selectInterval = 0.1):
-      self.websocketclass = websocketclass
-      self.serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-      self.serversocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-      self.serversocket.bind((host, port))
-      self.serversocket.listen(5)
-      self.selectInterval = selectInterval
-      self.connections = {}
-      self.listeners = [self.serversocket]
+    def __init__(self, host, port, websocketclass, selectInterval = 0.1):
+        self.websocketclass = websocketclass
+        self.serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.serversocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.serversocket.bind((host, port))
+        self.serversocket.listen(5)
+        self.selectInterval = selectInterval
+        self.connections = {}
+        self.listeners = [self.serversocket]
 
-   def _decorateSocket(self, sock):
-      return sock
+    def _decorateSocket(self, sock):
+        return sock
 
-   def _constructWebSocket(self, sock, address):
-      return self.websocketclass(self, sock, address)
+    def _constructWebSocket(self, sock, address):
+        return self.websocketclass(self, sock, address)
 
-   def close(self):
-      self.serversocket.close()
+    def close(self):
+        self.serversocket.close()
+        for desc, conn in self.connections.items():
+           conn.close()
+           conn.handleClose()
 
-      for desc, conn in self.connections.items():
-         conn.close()
-         conn.handleClose()
-
-
-   def serveforever(self):
-      while True:
-         writers = []
-         for fileno in self.listeners:
+    def serve(self):
+        writers = []
+        for fileno in self.listeners:
             if fileno == self.serversocket:
-               continue
+                continue
             client = self.connections[fileno]
             if client.sendq:
-               writers.append(fileno)
+                writers.append(fileno)
 
-         if self.selectInterval:
+        if self.selectInterval:
             rList, wList, xList = select(self.listeners, writers, self.listeners, self.selectInterval)
-         else:
+        else:
             rList, wList, xList = select(self.listeners, writers, self.listeners)
 
-         for ready in wList:
+        for ready in wList:
             client = self.connections[ready]
             try:
-               while client.sendq:
-                  opcode, payload = client.sendq.popleft()
-                  remaining = client._sendBuffer(payload)
-                  if remaining is not None:
-                      client.sendq.appendleft((opcode, remaining))
-                      break
-                  else:
-                      if opcode == CLOSE:
-                         raise Exception('received client close')
+                while client.sendq:
+                    opcode, payload = client.sendq.popleft()
+                    remaining = client._sendBuffer(payload)
+                    if remaining is not None:
+                        client.sendq.appendleft((opcode, remaining))
+                        break
+                    else:
+                        if opcode == CLOSE:
+                           raise Exception('received client close')
 
             except Exception as n:
-               client.client.close()
-               client.handleClose()
-               del self.connections[ready]
-               self.listeners.remove(ready)
+                client.client.close()
+                client.handleClose()
+                del self.connections[ready]
+                self.listeners.remove(ready)
 
-         for ready in rList:
+        for ready in rList:
             if ready == self.serversocket:
-               try:
-                  sock, address = self.serversocket.accept()
-                  newsock = self._decorateSocket(sock)
-                  newsock.setblocking(0)
-                  fileno = newsock.fileno()
-                  self.connections[fileno] = self._constructWebSocket(newsock, address)
-                  self.listeners.append(fileno)
-               except Exception as n:
-                  if sock is not None:
-                     sock.close()
+                try:
+                    sock, address = self.serversocket.accept()
+                    newsock = self._decorateSocket(sock)
+                    newsock.setblocking(0)
+                    fileno = newsock.fileno()
+                    self.connections[fileno] = self._constructWebSocket(newsock, address)
+                    self.listeners.append(fileno)
+                except Exception as n:
+                    if sock is not None:
+                       sock.close()
             else:
-               if ready not in self.connections:
-                   continue
-               client = self.connections[ready]
-               try:
-                  client._handleData()
-               except Exception as n:
-                  client.client.close()
-                  client.handleClose()
-                  del self.connections[ready]
-                  self.listeners.remove(ready)
+                if ready not in self.connections:
+                    continue
+                client = self.connections[ready]
+                try:
+                    client._handleData()
+                except Exception as n:
+                    client.client.close()
+                    client.handleClose()
+                    del self.connections[ready]
+                    self.listeners.remove(ready)
 
-         for failed in xList:
+        for failed in xList:
             if failed == self.serversocket:
-               self.close()
-               raise Exception('server socket failed')
+                self.close()
+                raise Exception('server socket failed')
             else:
-               if failed not in self.connections:
-                  continue
-               client = self.connections[failed]
-               client.client.close()
-               client.handleClose()
-               del self.connections[failed]
-               self.listeners.remove(failed)
+                if failed not in self.connections:
+                    continue
+                client = self.connections[failed]
+                client.client.close()
+                client.handleClose()
+                del self.connections[failed]
+                self.listeners.remove(failed)
+
+    def serveforever(self):
+        while True:
+            self.serve()
 
 
 class SimpleSSLWebSocketServer(SimpleWebSocketServer):
